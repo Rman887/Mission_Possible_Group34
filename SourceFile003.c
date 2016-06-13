@@ -21,10 +21,10 @@ Moves the robot forward a specified distance.
 */
 void moveForward(double dist)
 {
-	motor[frontLeft] = 127;
-	motor[backLeft] = 127;
-	motor[frontRight] = -127;
-	motor[backRight] = -127;
+	motor[frontLeft] = 63;
+	motor[backLeft] = 63;
+	motor[frontRight] = -63;
+	motor[backRight] = -63;
 	wait1Msec(dist * 9);
 }
 
@@ -49,9 +49,6 @@ Rotates the crane to a specified angle.
 void rotateCrane(int angle)
 {
 	motor[crane] = angle;
-	//motor[crane] = 63;
-	//setServo(crane, 127);
-	wait1Msec(1000);
 }
 
 /*
@@ -76,25 +73,26 @@ void output4Bits(int num)
 	setLed(ledOrange, 0);
 	setLed(ledRed, 0);
 	setLed(ledGreen, 0);
+	wait1Msec(2000);
 }
 
 /*
 Checks whether the salinity sensor reports whether the water is salty.
 */
-int isSalty() {
+bool isSalty() {
 	int sal = SensorValue[salinity];
-	return sal < 100;
+	return sal < 700;
 }
 
 /*
-Reads the wind speed from the anemometor.
+Reads the wind speed from the anemometor in RPM.
 */
 int readWind() {
 	int anemValue1 = SensorValue[anemBack];
 	wait1Msec(10000);
 	int anemValue2 = SensorValue[anemBack];
 
-	return (anemValue2 - anemValue1) / 3600;
+	return (int) ((anemValue2-anemValue1)/60.0);
 }
 
 /*
@@ -104,52 +102,165 @@ int readTemperature() {
 	// Calibration: Degrees C = 108.86*e^(-0.026 * temp)
 	int temp = SensorValue[temperature];
 
-	int degrees = 108.87*exp(-0.026 * temp);
+	int degrees = (int) (108.87*exp(-0.026 * temp));
 
 	return degrees;
+
+	//return 8;
 }
 
 task main()
 {
-	// The rover will respond to manual input (controller) when this is true
-	bool manualControl = true;
+	int salData[16];
+	int salIndex = 0;
+	bool canReadSal = true;
 	
+	int tempData[16];
+	int tempIndex = 0;
+	bool canReadTemp = true;
+	
+	int windData[16];
+	int windIndex = 0;
+	bool canReadWind = true;
+
+	// The rover will respond to manual input (controller) when this is true
+	bool manualControl = false;
+
 	// Reset the servo crane
-	rotateCrane(50);
+	rotateCrane(-50);
+	bool craneDown = true;
 
 	while (true) {
 		// Keep the flashlight on
 		motor[flashlight] = 127;
-		
+
 		// Use manual control if needed
 		if (manualControl) {
 			// Left joystick controls left side
-			int leftPower = vexRT[Ch3];
+			int leftPower = vexRT[Ch3] / 2;
 			// Right joystick controls right side
-			int rightPower = vexRT[Ch2];
-	
-			// Crane is 8L
-			if (vexRT[Btn8L]) {
-				rotateCrane(0);
-			} else {
-				rotateCrane(50);
-			}
-			
+			int rightPower = vexRT[Ch2] / 2;
+
 			motor[frontLeft] = leftPower;
 			motor[backLeft] = leftPower;
 			motor[frontRight] = -rightPower;
 			motor[backRight] = -rightPower;
 		} else {
-			// Autonomous
-			motor[frontLeft] = 0;
-			motor[backLeft] = 0;
-			motor[frontRight] = 0;
-			motor[backRight] = 0;
+			// Wait 5 secs after landing
+			wait1Msec(5000);
+			
+			// Read wind speed
+			int wind = readWind();
+			windData[windIndex++] = wind;
+			
+			// Crane up
+			rotateCrane(120);
+			wait1Msec(5000);
+			
+			// Move to salt lake
+			moveForward(60);
+			wait1Msec(1000);
+			
+			// Crane down
+			for (int i = 0; i < 5; i++) {
+				rotateCrane(-10 * i);
+				wait1Msec(300);
+			}
+			
+			// Read salt
+			bool salty = isSalty();
+			if (salty) {
+				salData[salIndex++] = 3;
+			} else {
+				salData[salIndex++] = 2;
+			}
+			
+			// Manual
+			manualControl = true;
 		}
-		
+
 		// Let the 7U button toggle manual movement
 		if (vexRT[Btn7U]) {
 			manualControl = !manualControl;
 		}
+
+		// Crane is 7D
+		if (vexRT[Btn7D]) {
+			craneDown = !craneDown;
+			if (craneDown) {
+				for (int i = 0; i < 5; i++) {
+					rotateCrane(-10 * i);
+					wait1Msec(300);
+				}
+			} else {
+				rotateCrane(120);
+				wait1Msec(1000);
+			}
+		}
+
+		// Flag is 7R
+		if (vexRT[Btn7R]) {
+			motor[flag] = 127;
+			wait1Msec(5000);
+		} else {
+			motor[flag] = 0;
+		}
+
+		// Output temperature
+		if (vexRT[Btn8U]) {
+			if (canReadTemp) {
+				int temp = readTemperature();
+				tempData[tempIndex++] = temp;
+				canReadTemp = false;
+			}
+		}
+		else canReadTemp = true;
+		
+		// Output salinity
+		if (vexRT[Btn8L]) {
+			if (canReadSal) {
+				wait1MSec(10000);
+	
+				bool salty = isSalty();
+				if (salty) {
+					salData[salIndex++] = 3;
+				} else {
+					salData[salIndex++] = 2;
+				}
+				
+				canReadSal = false;
+			}
+		}
+		else canReadSal = true;
+		
+		// Output wind speed
+		if (vexRT[Btn8D]) {
+			if (canReadWind) {
+				int wind = readWind();
+				windData[windIndex++] = wind;
+				canReadWind = false;
+			}
+		}
+		else canReadWind = true;
+
+		// Stop
+		if (vexRT[Btn7L]) {
+			break;
+		}
+	}
+
+	for (int i = 0; i < salIndex; i++) {
+		output4Bits((salData[i] >> 4) & 0xF);
+		output4Bits(salData[i] & 0xF);
+	}
+	output4Bits(0xF);
+	for (int i = 0; i < tempIndex; i++) {
+		output4Bits((tempData[i] >> 4) & 0xF);
+		output4Bits(tempData[i] & 0xF);
+	}
+	output4Bits(0xF);
+	for (int i = 0; i < windIndex; i++) {
+		output4Bits((windData[i] >> 4) & 0xF);
+		output4Bits(windData[i] & 0xF);
 	}
 }
